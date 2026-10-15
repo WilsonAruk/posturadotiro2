@@ -184,6 +184,29 @@
   }
   .speed-btn.active{color:var(--amber-dim); border-color:var(--amber); background:rgba(242,148,26,.1);}
 
+  /* ---------- nova análise ---------- */
+  .new-analysis-btn{
+    display:none; align-items:center; justify-content:center; gap:8px; width:100%;
+    background:var(--surface-2); border:1px solid var(--line); color:var(--text);
+    font-family:'Inter',sans-serif; font-weight:700; font-size:13px; border-radius:12px;
+    padding:12px; margin-top:12px; cursor:pointer;
+  }
+
+  /* ---------- detalhamento ---------- */
+  .breakdown-card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:4px 16px; margin-top:16px;}
+  .metric-row{padding:13px 0; border-bottom:1px solid var(--line);}
+  .metric-row:last-child{border-bottom:none;}
+  .metric-head{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .metric-label{font-size:13.5px; font-weight:600;}
+  .metric-pill{
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:700; letter-spacing:.03em;
+    text-transform:uppercase; padding:3px 9px; border-radius:999px; background:var(--surface-2); color:var(--muted); flex:none;
+  }
+  .metric-pill.ok{background:rgba(31,174,111,.12); color:var(--green);}
+  .metric-pill.warn{background:rgba(242,148,26,.12); color:var(--amber-dim);}
+  .metric-pill.bad{background:rgba(220,38,38,.1); color:var(--red);}
+  .metric-detail{font-size:11.5px; color:var(--muted); line-height:1.5; margin-top:5px;}
+
   /* ---------- bottom nav ---------- */
   .bottom-nav{
     position:fixed; left:0; right:0; bottom:0; z-index:40;
@@ -267,6 +290,8 @@
     </div>
   </div>
 
+  <button class="new-analysis-btn" id="newAnalysisBtn">🔄 Nova análise</button>
+
   <div class="section-row">
     <div class="section-title">Modalidade do Arco</div>
     <div class="section-hint">Toque para avaliar outra modalidade</div>
@@ -293,6 +318,33 @@
   </div>
 
   <div class="bow-note" id="bowNote">Cotovelo de tração alinhado com a flecha.</div>
+
+  <div class="section-row">
+    <div class="section-title">Detalhamento</div>
+  </div>
+  <div class="breakdown-card" id="breakdownCard">
+    <div class="metric-row">
+      <div class="metric-head">
+        <span class="metric-label">Braço do arco</span>
+        <span class="metric-pill" id="pillBow">—</span>
+      </div>
+      <div class="metric-detail" id="detailBow">Envie uma análise para ver o detalhamento.</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-head">
+        <span class="metric-label">Braço de tração</span>
+        <span class="metric-pill" id="pillDraw">—</span>
+      </div>
+      <div class="metric-detail" id="detailDraw">Envie uma análise para ver o detalhamento.</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-head">
+        <span class="metric-label">Ombros</span>
+        <span class="metric-pill" id="pillShoulder">—</span>
+      </div>
+      <div class="metric-detail" id="detailShoulder">Envie uma análise para ver o detalhamento.</div>
+    </div>
+  </div>
 
   <div class="section-row">
     <div class="section-title">Mais controles</div>
@@ -362,6 +414,13 @@ const subDiscipline = document.getElementById('subDiscipline');
 const handToggle = document.getElementById('handToggle');
 const tglSkeletonOnly = document.getElementById('tglSkeletonOnly');
 const tglBlurFace = document.getElementById('tglBlurFace');
+const newAnalysisBtn = document.getElementById('newAnalysisBtn');
+const pillBow = document.getElementById('pillBow');
+const detailBow = document.getElementById('detailBow');
+const pillDraw = document.getElementById('pillDraw');
+const detailDraw = document.getElementById('detailDraw');
+const pillShoulder = document.getElementById('pillShoulder');
+const detailShoulder = document.getElementById('detailShoulder');
 
 // ---------- estado ----------
 let mode = 'idle'; // idle | video | photo
@@ -438,6 +497,7 @@ function showStage(newMode){
   transport.style.display = newMode==='video' ? 'flex' : 'none';
   eyeBtn.style.display = 'flex';
   retakeBtn.style.display = 'flex';
+  newAnalysisBtn.style.display = 'flex';
   resizeCanvas();
 }
 
@@ -460,13 +520,16 @@ function resetAll(){
   transport.style.display = 'none';
   eyeBtn.style.display = 'none';
   retakeBtn.style.display = 'none';
+  newAnalysisBtn.style.display = 'none';
   tipChip.style.display = 'none';
   ctx.clearRect(0,0,canvas.width,canvas.height);
   setScore(null);
+  resetBreakdown();
   fileInput.value = '';
   photoInput.value = '';
 }
 retakeBtn.addEventListener('click', resetAll);
+newAnalysisBtn.addEventListener('click', resetAll);
 
 btnSendVideo.addEventListener('click', ()=> fileInput.click());
 btnUsePhoto.addEventListener('click', ()=> photoInput.click());
@@ -617,6 +680,53 @@ function showTip(text, good){
   tipChip.style.display = 'block';
 }
 
+// ---------- detalhamento por métrica ----------
+function metricDetail(key, cls, val){
+  if(cls==null) return 'Não foi possível medir — melhore o enquadramento (braço visível, de perfil para o alvo).';
+  const v = val!=null ? Math.round(val) : null;
+  if(key==='bow'){
+    if(cls==='ok') return `Alinhado corretamente (${v}°).`;
+    if(cls==='warn') return v>35 ? `Um pouco alto (${v}°) — abaixe levemente o braço do arco.` : `Um pouco baixo (${v}°) — eleve levemente o braço do arco.`;
+    return v<=19 ? `Baixo demais (${v}°) — eleve o braço do arco até a altura do ombro.` : `Alto demais (${v}°) — abaixe o braço do arco até a altura do ombro.`;
+  }
+  if(key==='draw'){
+    if(cls==='ok') return 'Cotovelo de tração alinhado com a linha da flecha.';
+    if(cls==='warn') return v>0 ? 'Cotovelo levemente alto — abaixe um pouco.' : 'Cotovelo levemente baixo — eleve um pouco.';
+    return v>0 ? 'Cotovelo de tração muito alto — abaixe até alinhar com a flecha.' : 'Cotovelo de tração muito baixo — eleve até alinhar com a flecha.';
+  }
+  if(key==='shoulders'){
+    if(cls==='ok') return 'Ombros nivelados em relação ao alvo.';
+    if(cls==='warn') return 'Ombros levemente inclinados — ajuste a postura.';
+    return 'Ombros muito inclinados — nivele os ombros em relação ao alvo.';
+  }
+  return '';
+}
+
+function setMetricUI(pillEl, detailEl, key, cls, val){
+  pillEl.classList.remove('ok','warn','bad');
+  if(cls){
+    pillEl.classList.add(cls);
+    pillEl.textContent = cls==='ok' ? 'OK' : cls==='warn' ? 'Atenção' : 'Ajustar';
+  } else {
+    pillEl.textContent = '—';
+  }
+  detailEl.textContent = metricDetail(key, cls, val);
+}
+
+function updateBreakdown(bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls){
+  setMetricUI(pillBow, detailBow, 'bow', bowCls, bowArmAngle);
+  setMetricUI(pillDraw, detailDraw, 'draw', drawCls, drawArmAngle);
+  setMetricUI(pillShoulder, detailShoulder, 'shoulders', shoulderCls, shoulderAngle);
+}
+
+function resetBreakdown(){
+  [[pillBow,detailBow],[pillDraw,detailDraw],[pillShoulder,detailShoulder]].forEach(([pillEl,detailEl])=>{
+    pillEl.classList.remove('ok','warn','bad');
+    pillEl.textContent = '—';
+    detailEl.textContent = 'Envie uma análise para ver o detalhamento.';
+  });
+}
+
 function drawBlurredFace(lm, sourceEl, w, h){
   const facePts = FACE_IDX.map(i=>lm[i]).filter(Boolean).map(p=>({x:p.x*w,y:p.y*h}));
   if(facePts.length<3) return;
@@ -645,6 +755,7 @@ function renderResult(result, sourceEl, w, h){
 
   if(!(result.landmarks && result.landmarks.length)){
     setScore(null);
+    resetBreakdown();
     return;
   }
 
@@ -703,6 +814,8 @@ function renderResult(result, sourceEl, w, h){
   const bowCls = classify(bowArmAngle, BANDS.bowArm);
   const drawCls = classify(drawArmAngle, BANDS.drawArm);
   const shoulderCls = classify(shoulderAngle, BANDS.shoulders);
+
+  updateBreakdown(bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls);
 
   const parts = [];
   if(bowCls) parts.push({key:'bow', cls:bowCls, score:CLS_SCORE[bowCls]});
