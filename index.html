@@ -875,25 +875,36 @@ async function ensureModelMode(target){
   modelMode = target;
 }
 
+async function createLandmarker(vision, PoseLandmarker, delegate){
+  return PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate
+    },
+    runningMode: "VIDEO", numPoses: 1
+  });
+}
+
 async function initModel(){
   loadingBadge.style.display = 'flex';
   const mod = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14");
   const { PoseLandmarker, FilesetResolver } = mod;
   const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-      delegate: "GPU"
-    },
-    runningMode: "VIDEO", numPoses: 1
-  });
+  try{
+    poseLandmarker = await createLandmarker(vision, PoseLandmarker, "GPU");
+  }catch(gpuErr){
+    console.warn('Falha no delegate GPU, tentando CPU…', gpuErr);
+    loadingText.textContent = 'GPU indisponível, tentando modo compatível…';
+    poseLandmarker = await createLandmarker(vision, PoseLandmarker, "CPU");
+  }
   modelMode = 'VIDEO';
   modelReady = true;
   loadingBadge.style.display = 'none';
   if(mode==='photo') analyzeCurrentPhoto();
 }
 initModel().catch(err=>{
-  loadingBadge.innerHTML = '<div style="max-width:220px;text-align:center;line-height:1.55;"><strong style="color:var(--amber);">Não deu para carregar o modelo aqui.</strong><br><br>Abra este arquivo por um servidor local (ex.: <code>python3 -m http.server</code>) ou publicado em HTTPS — não como preview/<code>file://</code>.</div>';
+  loadingBadge.style.display = 'flex';
+  loadingBadge.innerHTML = '<div style="max-width:220px;text-align:center;line-height:1.55;"><strong style="color:var(--amber);">Não deu para carregar o modelo aqui.</strong><br><br>Verifique sua conexão com a internet e recarregue a página. Se persistir, abra em outro navegador (Chrome/Safari atualizados) publicado em HTTPS — não como preview/<code>file://</code>.</div>';
   console.error(err);
 });
 
