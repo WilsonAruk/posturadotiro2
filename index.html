@@ -51,6 +51,13 @@
     font-weight:800; font-size:13px; padding:5px 11px; border-radius:999px; font-family:'IBM Plex Mono',monospace;
   }
 
+  /* ---------- aviso de detecção de lado do arco ---------- */
+  .hand-warn-banner{
+    font-size:11.5px; line-height:1.5; color:var(--amber-dim);
+    background:rgba(242,148,26,.08); border:1px solid rgba(242,148,26,.3);
+    border-radius:10px; padding:9px 12px; margin-bottom:12px;
+  }
+
   /* ---------- stage card ---------- */
   .stage-card{background:var(--card); border-radius:20px; padding:10px; border:1px solid var(--line);}
   .stage-wrap{position:relative; border-radius:14px; overflow:hidden; background:#000; aspect-ratio:3/4;}
@@ -247,6 +254,10 @@
     </div>
   </div>
 
+  <div class="hand-warn-banner" id="handWarnBanner" style="display:none;">
+    ⚠️ Não deu pra detectar automaticamente o lado do arco (braços pouco visíveis na imagem) — confirme manualmente tocando em "<span id="handWarnLabel">Destro</span>" acima.
+  </div>
+
   <div class="stage-card">
     <div class="stage-wrap empty" id="stageWrap">
       <div class="empty-state" id="emptyState">
@@ -412,6 +423,8 @@ const saveBtn = document.getElementById('saveBtn');
 const bowNote = document.getElementById('bowNote');
 const subDiscipline = document.getElementById('subDiscipline');
 const handToggle = document.getElementById('handToggle');
+const handWarnBanner = document.getElementById('handWarnBanner');
+const handWarnLabel = document.getElementById('handWarnLabel');
 const tglSkeletonOnly = document.getElementById('tglSkeletonOnly');
 const tglBlurFace = document.getElementById('tglBlurFace');
 const newAnalysisBtn = document.getElementById('newAnalysisBtn');
@@ -432,6 +445,7 @@ let blurFace = false;
 let poseLandmarker = null, modelMode = null, modelReady = false;
 let runningStream = null, lastVideoTime = -1, currentFacingMode = 'environment';
 let currentPhotoURL = null;
+let handManual = false; // true depois que o usuário corrige manualmente — para de autodetectar
 
 const DISCIPLINE_LABEL = { recurvo:'Recurvo', composto:'Composto', barebow:'Barebow', tradicional:'Tradicional' };
 const BOW_NOTE = {
@@ -443,10 +457,36 @@ const BOW_NOTE = {
 
 function updateHeaderLabels(){
   subDiscipline.textContent = DISCIPLINE_LABEL[bowType];
-  handToggle.textContent = bowSide==='left' ? 'Destro' : 'Canhoto';
+  handToggle.textContent = (bowSide==='left' ? 'Destro' : 'Canhoto') + (handManual ? '' : ' · auto');
+  handToggle.title = handManual
+    ? 'Definido manualmente — toque para alternar'
+    : 'Detectado automaticamente pela pose — toque para corrigir se estiver errado';
+  handWarnLabel.textContent = bowSide==='left' ? 'Destro' : 'Canhoto';
   bowNote.textContent = BOW_NOTE[bowType];
 }
 updateHeaderLabels();
+
+function setHandWarn(show){
+  handWarnBanner.style.display = show ? 'block' : 'none';
+}
+
+// ---------- autodetecção de destro/canhoto pela pose ----------
+// Braço do arco fica estendido (ângulo do cotovelo perto de 180°);
+// braço de tração fica dobrado, puxando até perto do rosto (ângulo bem menor).
+function autoDetectBowSide(lm){
+  if(handManual){ setHandWarn(false); return; }
+  if(![11,12,13,14,15,16].every(i=>isVisible(lm[i]))){ setHandWarn(true); return; }
+  const leftElbowAngle = angleAt(lm[11], lm[13], lm[15]);
+  const rightElbowAngle = angleAt(lm[12], lm[14], lm[16]);
+  if(leftElbowAngle==null || rightElbowAngle==null){ setHandWarn(true); return; }
+  if(Math.abs(leftElbowAngle - rightElbowAngle) < 15){ setHandWarn(true); return; } // diferença pequena demais, não arrisca palpite
+  setHandWarn(false);
+  const detected = leftElbowAngle > rightElbowAngle ? 'left' : 'right';
+  if(detected !== bowSide){
+    bowSide = detected;
+    updateHeaderLabels();
+  }
+}
 
 function forceRedraw(){
   if(mode==='photo') analyzeCurrentPhoto();
@@ -464,6 +504,8 @@ document.querySelectorAll('#disciplinePills .pill').forEach(p=>{
 });
 handToggle.addEventListener('click', ()=>{
   bowSide = bowSide==='left' ? 'right' : 'left';
+  handManual = true;
+  setHandWarn(false);
   updateHeaderLabels();
   forceRedraw();
 });
@@ -503,6 +545,9 @@ function showStage(newMode){
 
 function resetAll(){
   video.pause();
+  handManual = false;
+  setHandWarn(false);
+  updateHeaderLabels();
   stageWrap.style.aspectRatio = '';
   if(runningStream){ runningStream.getTracks().forEach(t=>t.stop()); runningStream=null; }
   flipCamBtn.style.display = 'none';
@@ -702,11 +747,26 @@ function metricDetail(key, cls, val){
   return '';
 }
 
+// percentual contínuo de aproveitamento por métrica, a partir da distância até a faixa ideal
+const METRIC_IDEAL = { bow:{min:20,max:35}, draw:{min:0,max:0}, shoulders:{min:180,max:180} };
+const METRIC_DECAY = { bow:7, draw:17.5, shoulders:7 }; // pontos perdidos por grau de distância da faixa ideal
+function metricPercent(key, val){
+  if(val==null) return null;
+  const ideal = METRIC_IDEAL[key];
+  let dist = 0;
+  if(val < ideal.min) dist = ideal.min - val;
+  else if(val > ideal.max) dist = val - ideal.max;
+  const pct = Math.round(100 - dist*METRIC_DECAY[key]);
+  return Math.max(0, Math.min(100, pct));
+}
+
 function setMetricUI(pillEl, detailEl, key, cls, val){
   pillEl.classList.remove('ok','warn','bad');
   if(cls){
     pillEl.classList.add(cls);
-    pillEl.textContent = cls==='ok' ? 'OK' : cls==='warn' ? 'Atenção' : 'Ajustar';
+    const label = cls==='ok' ? 'OK' : cls==='warn' ? 'Atenção' : 'Ajustar';
+    const pct = metricPercent(key, val);
+    pillEl.textContent = pct!=null ? `${label} · ${pct}%` : label;
   } else {
     pillEl.textContent = '—';
   }
@@ -761,6 +821,8 @@ function renderResult(result, sourceEl, w, h){
 
   const lm = result.landmarks[0];
   const pts = lm.map(p=>({x:p.x*w, y:p.y*h}));
+
+  autoDetectBowSide(lm);
 
   if(!skeletonOnly && blurFace){
     drawBlurredFace(lm, sourceEl, w, h);
