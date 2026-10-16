@@ -700,7 +700,6 @@ const BANDS = {
   drawArm: [ {max:-16,cls:'bad'}, {min:-15,max:-6,cls:'warn'}, {min:-5,max:5,cls:'ok'}, {min:6,max:15,cls:'warn'}, {min:16,cls:'bad'} ],
   shoulders:[ {max:174,cls:'bad'}, {min:175,max:179,cls:'warn'}, {min:180,max:180,cls:'ok'}, {min:181,max:185,cls:'warn'}, {min:186,cls:'bad'} ]
 };
-const CLS_SCORE = {ok:100, warn:65, bad:30};
 function classify(value, table){
   if(value==null) return null;
   const v = Math.round(value);
@@ -776,6 +775,22 @@ const METRIC_TARGET = {
 function metricDeviationDeg(key, val){
   if(val==null) return null;
   return Math.round(Math.abs(val - METRIC_TARGET[key]));
+}
+// mesma coisa, mas preservando o sinal (+ acima/aberto, − abaixo/fechado do alvo) — usado na guia visual
+function metricDeviationSigned(key, val){
+  if(val==null) return null;
+  return Math.round(val - METRIC_TARGET[key]);
+}
+
+// pontuação contínua por métrica (0-100), calibrada pela mesma faixa "Atenção→Ajustar" já usada no detalhamento:
+// perto do alvo = perto de 100; no limiar onde o rótulo viraria "Ajustar" = ~65; bem além disso tende a 0.
+// Evita que um desvio de 1-3° já derrube o score geral para o mesmo nível de um erro grande.
+const METRIC_WARN_EDGE = { bow:10, bowElbow:25, draw:15, shoulders:5 }; // grau de desvio onde warn vira bad
+function metricContinuousScore(key, val){
+  if(val==null) return null;
+  const dev = Math.abs(val - METRIC_TARGET[key]);
+  const sigma = METRIC_WARN_EDGE[key] / 0.928; // calibrado para dar ~65 pontos exatamente no limiar "Ajustar"
+  return Math.round(100 * Math.exp(-0.5 * Math.pow(dev/sigma, 2)));
 }
 
 function setMetricUI(pillEl, detailEl, key, cls, val){
@@ -858,7 +873,7 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
   }
   function drawGuideLabel(point, deg){
     if(!point || deg==null) return;
-    const text = `${deg}°`;
+    const text = `${deg>0 ? '+' : ''}${deg}°`;
     ctx.save();
     ctx.setLineDash([]);
     ctx.font = '700 12px Inter, sans-serif';
@@ -876,7 +891,7 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
   if(bowCls){
     const bsIdx = bowSide==='left' ? 11:12, beIdx = bowSide==='left' ? 13:14, bwIdx = bowSide==='left' ? 15:16;
     const S = pts[bsIdx], E = pts[beIdx], W = pts[bwIdx];
-    const dev = metricDeviationDeg(bowMetricKey, bowArmAngle);
+    const dev = metricDeviationSigned(bowMetricKey, bowArmAngle);
     if(bowMetricKey==='bowElbow'){
       if(S && E && W){
         const current = signedAngleDeg(E, S, W);
@@ -907,7 +922,7 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
       const rad = METRIC_TARGET.draw*Math.PI/180; // alvo 0° — horizontal
       const ideal = { x:E.x+dirX*len*Math.cos(rad), y:E.y-len*Math.sin(rad) };
       drawGuideSeg(E, ideal);
-      drawGuideLabel(ideal, metricDeviationDeg('draw', drawArmAngle));
+      drawGuideLabel(ideal, metricDeviationSigned('draw', drawArmAngle));
     }
   }
 
@@ -917,7 +932,7 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
     const halfW = Math.hypot(pts[12].x-pts[11].x, pts[12].y-pts[11].y)/2;
     const idealEnd = {x:mx+halfW,y:my};
     drawGuideSeg({x:mx-halfW,y:my}, idealEnd);
-    drawGuideLabel(idealEnd, metricDeviationDeg('shoulders', shoulderAngle));
+    drawGuideLabel(idealEnd, metricDeviationSigned('shoulders', shoulderAngle));
   }
 
   ctx.restore();
@@ -1008,9 +1023,9 @@ function renderResult(result, sourceEl, w, h){
   }
 
   const parts = [];
-  if(bowCls) parts.push({key:'bow', cls:bowCls, score:CLS_SCORE[bowCls]});
-  if(drawCls) parts.push({key:'draw', cls:drawCls, score:CLS_SCORE[drawCls], val:drawArmAngle});
-  if(shoulderCls) parts.push({key:'shoulder', cls:shoulderCls, score:CLS_SCORE[shoulderCls]});
+  if(bowCls) parts.push({key:'bow', cls:bowCls, score:metricContinuousScore(bowMetricKey, bowArmAngle)});
+  if(drawCls) parts.push({key:'draw', cls:drawCls, score:metricContinuousScore('draw', drawArmAngle), val:drawArmAngle});
+  if(shoulderCls) parts.push({key:'shoulder', cls:shoulderCls, score:metricContinuousScore('shoulders', shoulderAngle)});
 
   if(parts.length===0){ setScore(null); return; }
 
