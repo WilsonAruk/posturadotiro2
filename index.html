@@ -755,31 +755,25 @@ function metricDetail(key, cls, val){
   return '';
 }
 
-// percentual contínuo de aproveitamento por métrica, a partir da distância até a faixa ideal
-const METRIC_IDEAL = { bow:{min:20,max:35}, bowElbow:{min:165,max:180}, draw:{min:0,max:0}, shoulders:{min:180,max:180} };
-const METRIC_DECAY = { bow:7, bowElbow:7, draw:17.5, shoulders:7 }; // pontos perdidos por grau de distância da faixa ideal
-function metricPercent(key, val){
+// desvio em graus em relação ao ângulo ideal de cada métrica — mesma lógica usada nos ombros
+const METRIC_TARGET = {
+  bow: 27.5,     // centro da faixa ideal (20°-35°) para recurvo/barebow
+  bowElbow: 180, // braço totalmente estendido (composto)
+  draw: 0,       // cotovelo de tração alinhado com a flecha
+  shoulders: 180 // ombros nivelados
+};
+function metricDeviationDeg(key, val){
   if(val==null) return null;
-  const ideal = METRIC_IDEAL[key];
-  let dist = 0;
-  if(val < ideal.min) dist = ideal.min - val;
-  else if(val > ideal.max) dist = val - ideal.max;
-  const pct = Math.round(100 - dist*METRIC_DECAY[key]);
-  return Math.max(0, Math.min(100, pct));
+  return Math.round(Math.abs(val - METRIC_TARGET[key]));
 }
 
 function setMetricUI(pillEl, detailEl, key, cls, val){
   pillEl.classList.remove('ok','warn','bad');
   if(cls){
     pillEl.classList.add(cls);
-    if(cls==='ok'){
-      pillEl.textContent = 'OK';
-    } else {
-      const pct = metricPercent(key, val); // % de aproveitamento (quanto já está correto)
-      const deficit = pct!=null ? Math.max(0, Math.round(100 - pct)) : null;
-      const label = cls==='warn' ? 'Atenção' : 'Ajustar';
-      pillEl.textContent = deficit!=null ? `${label} · ${deficit}% a corrigir` : label;
-    }
+    const dev = metricDeviationDeg(key, val);
+    const label = cls==='ok' ? 'OK' : cls==='warn' ? 'Atenção' : 'Ajustar';
+    pillEl.textContent = dev!=null ? `${label} · ${dev}°` : label;
   } else {
     pillEl.textContent = '—';
   }
