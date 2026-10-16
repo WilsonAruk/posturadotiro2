@@ -362,6 +362,10 @@
   </div>
   <div class="controls-card">
     <div class="ctl-row">
+      <div class="ctl-text"><div class="label">Guia de postura ideal</div><div class="desc">Sobrepõe linhas tracejadas verdes mostrando o ângulo ideal de cada articulação, para comparar com a sua postura atual.</div></div>
+      <label class="switch"><input type="checkbox" id="tglIdealGuide"><span class="slider"></span></label>
+    </div>
+    <div class="ctl-row">
       <div class="ctl-text"><div class="label">Somente esqueleto</div><div class="desc">Oculta o vídeo/foto, mostra só o rastreamento — ideal para comparar tiros.</div></div>
       <label class="switch"><input type="checkbox" id="tglSkeletonOnly"><span class="slider"></span></label>
     </div>
@@ -427,6 +431,7 @@ const handWarnBanner = document.getElementById('handWarnBanner');
 const handWarnLabel = document.getElementById('handWarnLabel');
 const tglSkeletonOnly = document.getElementById('tglSkeletonOnly');
 const tglBlurFace = document.getElementById('tglBlurFace');
+const tglIdealGuide = document.getElementById('tglIdealGuide');
 const newAnalysisBtn = document.getElementById('newAnalysisBtn');
 const pillBow = document.getElementById('pillBow');
 const detailBow = document.getElementById('detailBow');
@@ -442,6 +447,7 @@ let bowSide = 'left'; // 'left' = braço do arco esquerdo (destro) · 'right' = 
 let showSkeleton = true;
 let skeletonOnly = false;
 let blurFace = false;
+let showIdealGuide = false;
 let poseLandmarker = null, modelMode = null, modelReady = false;
 let runningStream = null, lastVideoTime = -1, currentFacingMode = 'environment';
 let currentPhotoURL = null;
@@ -519,6 +525,10 @@ tglSkeletonOnly.addEventListener('change', ()=>{
 });
 tglBlurFace.addEventListener('change', ()=>{
   blurFace = tglBlurFace.checked;
+  forceRedraw();
+});
+tglIdealGuide.addEventListener('change', ()=>{
+  showIdealGuide = tglIdealGuide.checked;
   forceRedraw();
 });
 document.querySelectorAll('.speed-btn').forEach(b=>{
@@ -686,7 +696,8 @@ const BANDS = {
   // braço do arco medido como ângulo do cotovelo (ombro-cotovelo-punho) — usado só no Composto, onde o braço
   // fica quase esticado (perto de 180°), com leve flexão para absorver o recuo
   bowElbow: [ {max:154,cls:'bad'}, {min:155,max:164,cls:'warn'}, {min:165,max:180,cls:'ok'} ],
-  drawArm:[ {max:-3,cls:'bad'}, {min:-2,max:-1,cls:'warn'}, {min:0,max:0,cls:'ok'}, {min:1,max:2,cls:'warn'}, {min:3,cls:'bad'} ],
+  // braço de tração medido pelo ângulo do cotovelo (ombro-cotovelo-pulso) — ideal próximo de 90°
+  drawArm: [ {max:69,cls:'bad'}, {min:70,max:79,cls:'warn'}, {min:80,max:100,cls:'ok'}, {min:101,max:110,cls:'warn'}, {min:111,cls:'bad'} ],
   shoulders:[ {max:174,cls:'bad'}, {min:175,max:179,cls:'warn'}, {min:180,max:180,cls:'ok'}, {min:181,max:185,cls:'warn'}, {min:186,cls:'bad'} ]
 };
 const CLS_SCORE = {ok:100, warn:65, bad:30};
@@ -743,9 +754,9 @@ function metricDetail(key, cls, val){
     return `Muito dobrado (${v}°) — estenda mais o braço do arco, mantendo uma leve flexão no cotovelo.`;
   }
   if(key==='draw'){
-    if(cls==='ok') return 'Cotovelo de tração alinhado com a linha da flecha.';
-    if(cls==='warn') return v>0 ? 'Cotovelo levemente alto — abaixe um pouco.' : 'Cotovelo levemente baixo — eleve um pouco.';
-    return v>0 ? 'Cotovelo de tração muito alto — abaixe até alinhar com a flecha.' : 'Cotovelo de tração muito baixo — eleve até alinhar com a flecha.';
+    if(cls==='ok') return `Cotovelo de tração próximo do ideal (${v}°), puxando com a musculatura das costas.`;
+    if(cls==='warn') return v>90 ? `Cotovelo um pouco aberto (${v}°) — feche levemente, trazendo-o mais para trás.` : `Cotovelo um pouco fechado (${v}°) — abra levemente, sem perder o alinhamento.`;
+    return v>90 ? `Cotovelo muito aberto (${v}°) — feche até ficar perto de 90°.` : `Cotovelo muito fechado (${v}°) — abra até ficar perto de 90°, puxando com as costas.`;
   }
   if(key==='shoulders'){
     if(cls==='ok') return 'Ombros nivelados em relação ao alvo.';
@@ -759,7 +770,7 @@ function metricDetail(key, cls, val){
 const METRIC_TARGET = {
   bow: 27.5,     // centro da faixa ideal (20°-35°) para recurvo/barebow
   bowElbow: 180, // braço totalmente estendido (composto)
-  draw: 0,       // cotovelo de tração alinhado com a flecha
+  draw: 90,      // cotovelo de tração: ângulo ideal do cotovelo na ancoragem
   shoulders: 180 // ombros nivelados
 };
 function metricDeviationDeg(key, val){
@@ -805,6 +816,76 @@ function drawBlurredFace(lm, sourceEl, w, h){
   ctx.filter='blur(14px)';
   ctx.drawImage(sourceEl,0,0,w,h);
   ctx.filter='none';
+  ctx.restore();
+}
+
+// ---------- guia de postura ideal (sobreposição tracejada) ----------
+// Mostra, por articulação, onde o membro deveria estar para atingir o ângulo-alvo,
+// girando em torno do pivô correto (cotovelo ou ombro) e preservando o comprimento do membro.
+function rotatePointAround(pivot, point, deltaDeg){
+  const rad = deltaDeg*Math.PI/180;
+  const dx = point.x-pivot.x, dy = point.y-pivot.y;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return { x: pivot.x + dx*cos - dy*sin, y: pivot.y + dx*sin + dy*cos };
+}
+function signedAngleDeg(pivot, a, b){
+  const v1={x:a.x-pivot.x,y:a.y-pivot.y}, v2={x:b.x-pivot.x,y:b.y-pivot.y};
+  const cross = v1.x*v2.y - v1.y*v2.x, dot = v1.x*v2.x+v1.y*v2.y;
+  return Math.atan2(cross,dot)*180/Math.PI;
+}
+
+function drawIdealGuides(pts, bowMetricKey, bowCls, drawCls, shoulderCls){
+  ctx.save();
+  ctx.setLineDash([7,5]);
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(31,174,111,0.95)';
+  ctx.fillStyle = 'rgba(31,174,111,0.95)';
+  function drawGuideSeg(a, b){
+    if(!a || !b || isNaN(a.x) || isNaN(b.x)) return;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.beginPath(); ctx.arc(b.x,b.y,4.5,0,7); ctx.fill();
+  }
+
+  // braço do arco
+  if(bowCls){
+    const bsIdx = bowSide==='left' ? 11:12, beIdx = bowSide==='left' ? 13:14, bwIdx = bowSide==='left' ? 15:16;
+    const S = pts[bsIdx], E = pts[beIdx], W = pts[bwIdx];
+    if(bowMetricKey==='bowElbow'){
+      if(S && E && W){
+        const current = signedAngleDeg(E, S, W);
+        if(!isNaN(current) && current!==0){
+          const target = Math.sign(current)*METRIC_TARGET.bowElbow;
+          drawGuideSeg(E, rotatePointAround(E, W, target-current));
+        }
+      }
+    } else if(S && W){
+      const len = Math.hypot(W.x-S.x, W.y-S.y);
+      const dirX = (W.x-S.x) < 0 ? -1 : 1;
+      const rad = METRIC_TARGET.bow*Math.PI/180;
+      drawGuideSeg(S, { x:S.x+dirX*len*Math.cos(rad), y:S.y-len*Math.sin(rad) });
+    }
+  }
+
+  // braço de tração
+  if(drawCls){
+    const dsIdx = bowSide==='left' ? 12:11, deIdx = bowSide==='left' ? 14:13, dwIdx = bowSide==='left' ? 16:15;
+    const S = pts[dsIdx], E = pts[deIdx], W = pts[dwIdx];
+    if(S && E && W){
+      const current = signedAngleDeg(E, S, W);
+      if(!isNaN(current) && current!==0){
+        const target = Math.sign(current)*METRIC_TARGET.draw;
+        drawGuideSeg(E, rotatePointAround(E, W, target-current));
+      }
+    }
+  }
+
+  // ombros
+  if(shoulderCls && pts[11] && pts[12]){
+    const mx=(pts[11].x+pts[12].x)/2, my=(pts[11].y+pts[12].y)/2;
+    const halfW = Math.hypot(pts[12].x-pts[11].x, pts[12].y-pts[11].y)/2;
+    drawGuideSeg({x:mx-halfW,y:my}, {x:mx+halfW,y:my});
+  }
+
   ctx.restore();
 }
 
@@ -864,13 +945,13 @@ function renderResult(result, sourceEl, w, h){
     }
   }
 
-  // braço de tração
+  // braço de tração — ângulo do cotovelo (ombro-cotovelo-pulso); o ideal no ancoragem é próximo de 90°
   const drawShoulderPt = bowSide==='left' ? lm[12] : lm[11];
+  const drawElbowPt = bowSide==='left' ? lm[14] : lm[13];
   const drawWristPt = bowSide==='left' ? lm[16] : lm[15];
   let drawArmAngle = null;
-  if(drawShoulderPt && drawWristPt && isVisible(drawShoulderPt) && isVisible(drawWristPt)){
-    const dx=drawWristPt.x-drawShoulderPt.x, dy=drawWristPt.y-drawShoulderPt.y;
-    drawArmAngle = Math.atan2(-dy, Math.abs(dx))*180/Math.PI;
+  if(drawShoulderPt && drawElbowPt && drawWristPt && isVisible(drawShoulderPt) && isVisible(drawElbowPt) && isVisible(drawWristPt)){
+    drawArmAngle = angleAt(drawShoulderPt, drawElbowPt, drawWristPt);
   }
 
   // ombros
@@ -886,6 +967,10 @@ function renderResult(result, sourceEl, w, h){
   const shoulderCls = classify(shoulderAngle, BANDS.shoulders);
 
   updateBreakdown(bowMetricKey, bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls);
+
+  if(showSkeleton && showIdealGuide){
+    drawIdealGuides(pts, bowMetricKey, bowCls, drawCls, shoulderCls);
+  }
 
   const parts = [];
   if(bowCls) parts.push({key:'bow', cls:bowCls, score:CLS_SCORE[bowCls]});
@@ -903,7 +988,7 @@ function renderResult(result, sourceEl, w, h){
   } else if(worst.key==='bow'){
     showTip('Ajuste o braço do arco', false);
   } else if(worst.key==='draw'){
-    showTip(worst.val>0 ? 'Abaixe o cotovelo de tração' : 'Eleve o cotovelo de tração', false);
+    showTip(worst.val>90 ? 'Feche o cotovelo de tração' : 'Abra o cotovelo de tração', false);
   } else if(worst.key==='shoulder'){
     showTip('Nivele os ombros', false);
   }
