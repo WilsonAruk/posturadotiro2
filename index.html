@@ -259,6 +259,10 @@
     ⚠️ Não deu pra detectar automaticamente o lado do arco (braços pouco visíveis na imagem) — confirme manualmente tocando em "<span id="handWarnLabel">Destro</span>" acima.
   </div>
 
+  <div class="hand-warn-banner" id="cameraAngleWarnBanner" style="display:none;">
+    📐 A câmera parece estar de frente para o atleta, não de perfil — isso distorce os ângulos do braço do arco e do braço de tração (eles ficam "encurtados" na imagem). Tente fotografar de lado, perpendicular à linha de tiro, na altura do ombro.
+  </div>
+
   <div class="stage-card">
     <div class="stage-wrap empty" id="stageWrap">
       <div class="empty-state" id="emptyState">
@@ -428,6 +432,7 @@ const bowNote = document.getElementById('bowNote');
 const subDiscipline = document.getElementById('subDiscipline');
 const handToggle = document.getElementById('handToggle');
 const handWarnBanner = document.getElementById('handWarnBanner');
+const cameraAngleWarnBanner = document.getElementById('cameraAngleWarnBanner');
 const handWarnLabel = document.getElementById('handWarnLabel');
 const tglSkeletonOnly = document.getElementById('tglSkeletonOnly');
 const tglBlurFace = document.getElementById('tglBlurFace');
@@ -473,6 +478,27 @@ updateHeaderLabels();
 
 function setHandWarn(show){
   handWarnBanner.style.display = show ? 'block' : 'none';
+}
+
+// ---------- detecção de ângulo de câmera ruim (foto não tirada de perfil) ----------
+// O MediaPipe fornece, além de x/y na tela, um z aproximado (mesma escala de x) que indica
+// profundidade em relação ao quadril: quanto menor (mais negativo), mais perto da câmera.
+// Numa foto de perfil correta (câmera perpendicular à linha de tiro), os ombros ficam um
+// bem mais perto da câmera que o outro (zDiff grande) e quase sobrepostos na horizontal da
+// imagem (xDiff pequeno). Numa foto de frente (ruim para este app, que mede ângulos em 2D),
+// os ombros ficam lado a lado na imagem (xDiff grande) e com profundidade parecida (zDiff
+// pequeno) — é esse padrão que distorce os ângulos do braço do arco e de tração.
+function setCameraAngleWarn(show){
+  cameraAngleWarnBanner.style.display = show ? 'block' : 'none';
+}
+function checkCameraAngle(lm){
+  const sL = lm[11], sR = lm[12];
+  if(!isVisible(sL) || !isVisible(sR) || sL.z==null || sR.z==null){ setCameraAngleWarn(false); return; }
+  const xDiff = Math.abs(sL.x - sR.x);
+  const zDiff = Math.abs(sL.z - sR.z);
+  if(xDiff < 0.01 && zDiff < 0.01){ setCameraAngleWarn(false); return; } // ombros praticamente coincidentes, sem sinal confiável
+  const viewAngle = Math.atan2(xDiff, zDiff) * 180 / Math.PI; // 0° = perfil perfeito, 90° = de frente
+  setCameraAngleWarn(viewAngle > 50);
 }
 
 // ---------- autodetecção de destro/canhoto pela pose ----------
@@ -556,6 +582,7 @@ function resetAll(){
   video.pause();
   handManual = false;
   setHandWarn(false);
+  setCameraAngleWarn(false);
   updateHeaderLabels();
   stageWrap.style.aspectRatio = '';
   if(runningStream){ runningStream.getTracks().forEach(t=>t.stop()); runningStream=null; }
@@ -960,6 +987,7 @@ function renderResult(result, sourceEl, w, h){
   if(!(result.landmarks && result.landmarks.length)){
     setScore(null);
     resetBreakdown();
+    setCameraAngleWarn(false);
     return;
   }
 
@@ -967,6 +995,7 @@ function renderResult(result, sourceEl, w, h){
   const pts = lm.map(p=>({x:p.x*w, y:p.y*h}));
 
   autoDetectBowSide(lm);
+  checkCameraAngle(lm);
 
   if(!skeletonOnly && blurFace){
     drawBlurredFace(lm, sourceEl, w, h);
