@@ -312,7 +312,6 @@
     <button class="pill active" data-bow="recurvo">Recurvo</button>
     <button class="pill" data-bow="composto">Composto</button>
     <button class="pill" data-bow="barebow">Barebow</button>
-    <button class="pill" data-bow="tradicional">Tradicional</button>
   </div>
 
   <div class="score-card">
@@ -448,12 +447,11 @@ let runningStream = null, lastVideoTime = -1, currentFacingMode = 'environment';
 let currentPhotoURL = null;
 let handManual = false; // true depois que o usuário corrige manualmente — para de autodetectar
 
-const DISCIPLINE_LABEL = { recurvo:'Recurvo', composto:'Composto', barebow:'Barebow', tradicional:'Tradicional' };
+const DISCIPLINE_LABEL = { recurvo:'Recurvo', composto:'Composto', barebow:'Barebow' };
 const BOW_NOTE = {
   recurvo: 'Cotovelo de tração alinhado com a flecha.',
   composto: 'Com release e let-off, o cotovelo de tração tende a ficar mais aberto e o braço do arco mais relaxado.',
-  barebow: 'Braço do arco levemente flexionado (evita chicotada da corda); ancoragem geralmente mais baixa.',
-  tradicional: 'Postura instintiva: braço do arco relaxado e ancoragem pode variar tiro a tiro.'
+  barebow: 'Braço do arco levemente flexionado (evita chicotada da corda); ancoragem geralmente mais baixa.'
 };
 
 function updateHeaderLabels(){
@@ -683,7 +681,11 @@ function angleAt(A,B,C){
 }
 
 const BANDS = {
+  // braço do arco medido como ângulo da linha ombro→punho em relação à horizontal (recurvo/barebow)
   bowArm: [ {max:19,cls:'bad'}, {min:20,max:35,cls:'ok'}, {min:36,max:40,cls:'warn'}, {min:41,cls:'bad'} ],
+  // braço do arco medido como ângulo do cotovelo (ombro-cotovelo-punho) — usado só no Composto, onde o braço
+  // fica quase esticado (perto de 180°), com leve flexão para absorver o recuo
+  bowElbow: [ {max:154,cls:'bad'}, {min:155,max:164,cls:'warn'}, {min:165,max:180,cls:'ok'} ],
   drawArm:[ {max:-3,cls:'bad'}, {min:-2,max:-1,cls:'warn'}, {min:0,max:0,cls:'ok'}, {min:1,max:2,cls:'warn'}, {min:3,cls:'bad'} ],
   shoulders:[ {max:174,cls:'bad'}, {min:175,max:179,cls:'warn'}, {min:180,max:180,cls:'ok'}, {min:181,max:185,cls:'warn'}, {min:186,cls:'bad'} ]
 };
@@ -735,6 +737,11 @@ function metricDetail(key, cls, val){
     if(cls==='warn') return v>35 ? `Um pouco alto (${v}°) — abaixe levemente o braço do arco.` : `Um pouco baixo (${v}°) — eleve levemente o braço do arco.`;
     return v<=19 ? `Baixo demais (${v}°) — eleve o braço do arco até a altura do ombro.` : `Alto demais (${v}°) — abaixe o braço do arco até a altura do ombro.`;
   }
+  if(key==='bowElbow'){
+    if(cls==='ok') return `Braço bem estendido, com leve flexão (${v}°) — ideal para absorver o recuo sem travar o cotovelo.`;
+    if(cls==='warn') return `Um pouco mais dobrado que o ideal (${v}°) — tente estender mais o braço do arco.`;
+    return `Muito dobrado (${v}°) — estenda mais o braço do arco, mantendo uma leve flexão no cotovelo.`;
+  }
   if(key==='draw'){
     if(cls==='ok') return 'Cotovelo de tração alinhado com a linha da flecha.';
     if(cls==='warn') return v>0 ? 'Cotovelo levemente alto — abaixe um pouco.' : 'Cotovelo levemente baixo — eleve um pouco.';
@@ -749,8 +756,8 @@ function metricDetail(key, cls, val){
 }
 
 // percentual contínuo de aproveitamento por métrica, a partir da distância até a faixa ideal
-const METRIC_IDEAL = { bow:{min:20,max:35}, draw:{min:0,max:0}, shoulders:{min:180,max:180} };
-const METRIC_DECAY = { bow:7, draw:17.5, shoulders:7 }; // pontos perdidos por grau de distância da faixa ideal
+const METRIC_IDEAL = { bow:{min:20,max:35}, bowElbow:{min:165,max:180}, draw:{min:0,max:0}, shoulders:{min:180,max:180} };
+const METRIC_DECAY = { bow:7, bowElbow:7, draw:17.5, shoulders:7 }; // pontos perdidos por grau de distância da faixa ideal
 function metricPercent(key, val){
   if(val==null) return null;
   const ideal = METRIC_IDEAL[key];
@@ -779,8 +786,8 @@ function setMetricUI(pillEl, detailEl, key, cls, val){
   detailEl.textContent = metricDetail(key, cls, val);
 }
 
-function updateBreakdown(bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls){
-  setMetricUI(pillBow, detailBow, 'bow', bowCls, bowArmAngle);
+function updateBreakdown(bowMetricKey, bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls){
+  setMetricUI(pillBow, detailBow, bowMetricKey, bowCls, bowArmAngle);
   setMetricUI(pillDraw, detailDraw, 'draw', drawCls, drawArmAngle);
   setMetricUI(pillShoulder, detailShoulder, 'shoulders', shoulderCls, shoulderAngle);
 }
@@ -879,11 +886,12 @@ function renderResult(result, sourceEl, w, h){
     shoulderAngle = Math.abs(Math.atan2(dy,dx)*180/Math.PI);
   }
 
-  const bowCls = classify(bowArmAngle, BANDS.bowArm);
+  const bowMetricKey = bowType==='composto' ? 'bowElbow' : 'bow';
+  const bowCls = classify(bowArmAngle, BANDS[bowMetricKey]);
   const drawCls = classify(drawArmAngle, BANDS.drawArm);
   const shoulderCls = classify(shoulderAngle, BANDS.shoulders);
 
-  updateBreakdown(bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls);
+  updateBreakdown(bowMetricKey, bowArmAngle, bowCls, drawArmAngle, drawCls, shoulderAngle, shoulderCls);
 
   const parts = [];
   if(bowCls) parts.push({key:'bow', cls:bowCls, score:CLS_SCORE[bowCls]});
