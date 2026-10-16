@@ -674,8 +674,7 @@ scrub.addEventListener('change', ()=> scrubbing = false);
 const CONNECTIONS = [
   [11,12],[11,13],[13,15],[12,14],[14,16],
   [11,23],[12,24],[23,24],
-  [23,25],[25,27],[24,26],[26,28],
-  [15,17],[15,19],[15,21],[16,18],[16,20],[16,22]
+  [23,25],[25,27],[24,26],[26,28]
 ];
 const FACE_IDX = [0,1,2,3,4,5,6,7,8,9,10];
 const VISIBILITY_THRESHOLD = 0.5;
@@ -866,6 +865,16 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
   ctx.strokeStyle = 'rgba(31,174,111,0.95)';
   ctx.fillStyle = 'rgba(31,174,111,0.95)';
 
+  // direção geral do corpo (para onde o braço do arco aponta) — usada para decidir de que lado
+  // desenhar as guias horizontais. Calculada a partir do segmento ombro→punho do braço do arco,
+  // que é longo e estável; usar o segmento curto cotovelo→punho do braço de tração para isso
+  // é instável (quase vertical em muitas poses) e fazia a guia apontar pro lado errado.
+  const bsIdxFace = bowSide==='left' ? 11:12, bwIdxFace = bowSide==='left' ? 15:16;
+  let facingDirX = 1;
+  if(pts[bsIdxFace] && pts[bwIdxFace]){
+    facingDirX = (pts[bwIdxFace].x - pts[bsIdxFace].x) < 0 ? -1 : 1;
+  }
+
   function drawGuideSeg(a, b){
     if(!a || !b || isNaN(a.x) || isNaN(b.x)) return;
     ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
@@ -904,9 +913,8 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
       }
     } else if(S && W){
       const len = Math.hypot(W.x-S.x, W.y-S.y);
-      const dirX = (W.x-S.x) < 0 ? -1 : 1;
       const rad = METRIC_TARGET.bow*Math.PI/180;
-      const ideal = { x:S.x+dirX*len*Math.cos(rad), y:S.y-len*Math.sin(rad) };
+      const ideal = { x:S.x+facingDirX*len*Math.cos(rad), y:S.y-len*Math.sin(rad) };
       drawGuideSeg(S, ideal);
       drawGuideLabel(ideal, dev);
     }
@@ -918,9 +926,8 @@ function drawIdealGuides(pts, bowMetricKey, bowArmAngle, bowCls, drawArmAngle, d
     const E = pts[deIdx], W = pts[dwIdx];
     if(E && W){
       const len = Math.hypot(W.x-E.x, W.y-E.y);
-      const dirX = (W.x-E.x) < 0 ? -1 : 1;
       const rad = METRIC_TARGET.draw*Math.PI/180; // alvo 0° — horizontal
-      const ideal = { x:E.x+dirX*len*Math.cos(rad), y:E.y-len*Math.sin(rad) };
+      const ideal = { x:E.x+facingDirX*len*Math.cos(rad), y:E.y-len*Math.sin(rad) };
       drawGuideSeg(E, ideal);
       drawGuideLabel(ideal, metricDeviationSigned('draw', drawArmAngle));
     }
